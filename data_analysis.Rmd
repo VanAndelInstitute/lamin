@@ -1,0 +1,1030 @@
+---
+title: "Data Analysis Supplement"
+output:
+  html_document:
+    highlight: null
+    theme: lumen
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+date: "April 19, 2019"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=TRUE)
+man_theme <- function() {
+  theme_bw() +
+    theme(axis.text.x = element_text(size = 8,
+                                     angle = 300, 
+                                     vjust = 1, 
+                                     hjust = 0),
+          axis.text.y = element_text(size = 8),
+          axis.title.x = element_text(face = "bold", size = 10),
+          axis.title.y = element_text(face = "bold", size = 10), 
+          plot.title = element_text(size = 10, face = "bold"),
+          legend.text = element_text(size = 8),
+          plot.margin = margin(0.5, 0.1, 0, 0.7, "cm"),
+          legend.key.height = unit(5, "points"), 
+          legend.key.width = unit(10, "points"),
+          legend.title = element_text(face="bold"))
+}
+
+theme_nogrid <- function() {
+  theme(
+    plot.background = element_blank()
+    ,panel.grid.major = element_blank()
+    ,panel.grid.minor = element_blank()
+  )
+}
+
+theme_no_x <- function() {
+  theme(
+    axis.text.x = element_blank()
+  )
+}
+
+catcolors <- c("#00ade2", "#dd4055", "#00b04e", "#ef9630", "#706aaa")
+
+```
+
+## Introduction
+
+This document was prepared in support of our paper:
+
+<center>
+<b>Toxicogenomic identification of repositioned therapy for a rare monogenic disease.</b>
+
+Eric J. Kort MD MS, Nazish Sayed MD PhD, Chun Liu PhD, Sean Wu MD PhD, 
+Joseph Wu MD PhD, Stefan Jovinge MD PhD.
+
+</center>
+
+## Pre-requisites
+
+This document requires a number of R packages to complete the analysis. Missing 
+dependencies may be installed as follows:
+
+```{r}
+
+setRepositories(ind = c(1,2,3,4,5))
+
+reqs <- c("circlize", 
+          "clusterProfiler",
+          "ComplexHeatmap", 
+          "dplyr",
+          "foreach",
+          "ggplot2",
+          "hgu133a.db",
+          "ggrepel",
+          "ggsignif",
+          "ggsignif",
+          "reshape2",
+          "stringr")
+
+ix <- which(!reqs %in% installed.packages())
+if(length(ix) > 0) {
+  install.packages(reqs[ix])
+}
+
+```
+
+The following sections document how the data for this paper were processed and
+how the figures were generated.  
+
+## Figure 1 : Overview
+
+Figure 1 is a schematic overview prepared in MS Powerpoint.
+
+## Figure 2 : Defining LMNA Gene Signature
+
+Normalized gene expression data was obtained from the LINCS L1000 program.  We
+then calculated the robust z-score for each gene within each sample relative
+to vehicle treated samples of the same cell type on the same 384 well plate.
+These z-scores were loaded into a Redis in memory database for efficient data
+access.  We extracted the z-scores for all LMNA perturbed instances (knockdown
+or over-expression). The resulting dataset is available in this repository 
+as `final_data\lamin.rds`
+
+
+```{r results='hide', echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+library(rredis)
+r_host = "10.152.220.28"
+r_port = 6379
+redisConnect(host=r_host, port=r_port)
+
+if(!exists("metadata")) metadata <- readRDS("data/metadata.rds")
+metadata$pert_desc <- tolower(metadata$pert_desc)
+
+lam_inst <- which(metadata$pert_desc == "lmna" &  
+                    metadata$is_gold & 
+                    metadata$pert_type == "trt_sh")
+lam_keys <- paste(metadata$distil_id[lam_inst], "_ZSVC", sep="")
+
+data <- do.call(cbind, redisMGet(lam_keys))
+ids <- genes <- rownames(data)
+data <- apply(data, 2, as.numeric)
+rownames(data) <- ids
+saveRDS(data, file="data/lamin.rds")
+
+```
+
+Robustly identifying differentially expressed genes (DEGs) continues to be an
+active area of research in itself. It is widely known that large scale gene
+expression efforts are plagued with "batch effects" wherein the variation
+between samples is overwhelmed by variation between plates, technicians,
+dates, labs, etc.  We took two steps to minimize batch effects.  First, we calculated
+z-scores using control samples from the same plate as the treated cells,
+thereby eliminating systematic biases between plates.  Second, we converted
+our z-scores to ranks, thereby eliminating any isotonic (rank invariant)
+shifts in z-scores that may arise between batches.  As we converted to rank
+space to eliminate isotonic batch effects, we proceeded with non-parametric
+approach to DEG identification.
+
+To identify genes exhibiting consistent differential expression, we performed
+a "rank of ranks" analysis.  First, the data was ranked sample-wise as
+described above. Second, the entire matrix of ranks (978 genes by 84 shRNA
+samples) was ranked and Kolmogorov Smirnov analysis was performed on the
+position of each occurrence of each gene within this vector of ranks.  The
+resulting analysis quantifies the extent to which the expression of each gene
+was consistently biased up or down relative to all other genes.
+
+This process is illustrated for 8 representative samples in figure 2A.
+
+```{r}
+library(ggplot2)
+data <- readRDS("final_data/lamin.rds")
+library(hgu133a.db)
+library(reshape2)
+library(foreach)
+
+gg <- unlist(mget(rownames(data), hgu133aSYMBOL))
+gd <- foreach(i = 1:8, .combine=cbind) %do% {
+  d <- data[,i]
+  g <- gg[order(d, decreasing = TRUE)]
+  col <- rep("#cccccc", length(g))
+  col[which(g == "RHOA")] <- catcolors[2]
+  col[which(g == "EDEM1")] <- catcolors[1]
+  col  
+}
+gd.m <- melt(gd)
+
+gd.m$hits <- gd.m$value
+gd.m$hits[which(!gd.m$value %in% catcolors)] <- NA
+gd.m$value <- factor(gd.m$value, ordered=TRUE, levels=c(catcolors[1], catcolors[2], "#cccccc"))
+gd.m$hits <- factor(gd.m$hits, ordered=TRUE, levels=c(catcolors[1], catcolors[2], "#cccccc"))
+
+fig_2a_1 <- ggplot(gd.m, aes(y = Var1, x=Var2, fill = value)) + 
+  geom_tile(width=0.8, height=10, show.legend=FALSE) + 
+  geom_tile(aes(fill=hits, width=0.8, height=10)) + 
+  xlab("Sample") + 
+  ylab("Gene rank") +
+  scale_fill_manual(values = c(catcolors[1], "#cccccc", catcolors[2]), 
+                    guide=guide_legend(title = "Gene", reverse = TRUE), 
+                    labels=c("EDEM1", "Others", "RHOA")) +
+  scale_y_reverse(lim=c(978,1)) +
+  man_theme() + 
+  theme_nogrid() +
+  theme_no_x() +
+  theme(legend.key.height = unit(5, "points"), 
+        legend.key.width = unit(5, "points"),
+        legend.title = element_text(face="bold"))
+
+ksd <- as.vector(data[ , 1:8])
+names(ksd) <- rep(gg, 8)
+ksd <- sort(ksd, decreasing=TRUE)
+ks <- function(x, v) {
+  i <- sum(x == v, na.rm=TRUE)
+  pen <- -1/(length(x) - i)
+  inc <- 1 / i
+  sc <- rep(pen, length(x))
+  sc[which(x == v)] <- inc
+  cumsum(sc)
+}
+
+RHOA_ks <- ks(names(ksd), "RHOA")
+EDEM1_ks <- ks(names(ksd), "EDEM1")
+gd <- data.frame(RHOA = RHOA_ks, 
+                 EDEM1 = EDEM1_ks,
+                 x = 1:length(ksd))
+
+gd.m <- melt(gd, id.vars=c("x"))
+fig_2a_2 <- ggplot(gd.m, aes(x=x, y=value, color=variable)) +
+  geom_line(size=1) +
+  geom_hline(yintercept=0) +
+  labs(color = "Gene") +
+  ylab("KS Running Sum") +
+  xlab("Gene rank (across all samples)") +
+  scale_color_manual(values = catcolors[2:1]) +
+  man_theme()  +
+    theme(legend.key.height = unit(5, "points"), 
+        legend.key.width = unit(10, "points"),
+        legend.title = element_text(face="bold"))
+```
+
+And the full analysis accross all samples:
+
+```{r}
+data <- readRDS("final_data/lamin.rds")
+
+ks <- function(x, ix) {
+  n <- length(x)
+  scores <- -rep(1/(n-length(ix)), n)
+  inc <- 1/length(ix)
+  
+  # need to account for ties
+  ix <- floor(x[ix])
+  scores[ix] <- 0
+  for(i in ix) {
+    scores[i] = scores[i] + inc
+  }
+  if(-min(cumsum(scores)) >= max(cumsum(scores))) {
+    return(0)
+  } else {
+    return(max(cumsum(scores)))
+  }
+}
+
+ranks <- apply(-data, 2, rank)
+ranks <- rank(as.vector(ranks))
+genes <- rep(rownames(data), ncol(data))
+
+ranks_d <- rank(-ranks)
+up <- numeric(0)
+down <- numeric(0)
+for(g in unique(genes)) {
+  up <- c(up, ks(ranks, which(genes==g) ) )
+  down <- c(down, ks(ranks_d, which(genes==g) ) )
+}
+names(up) <- unique(genes)
+names(down) <- unique(genes)
+
+```
+
+Finally, we are interested in identifying those genes whose transcriptional
+response is *specific* to LMNA perturbation, and not a generic response.  To
+quantify the extent to which the observed KS scores for each genes were
+specific to LMNA perturbation, we calculated corresponding KS scores for
+100,000 random sets of shRNA treated samples (84 samples in each set to match
+the LMNA set) in the LINCS data.  This calculation was performed exactl as 
+above except that these random sample sets were used in place of the LMNA 
+perturbed sample. This data then allowed us to empirically
+estimated the significance (i.e., bootstrapped p-value) of the KS scores
+calculated for each gene in our LMNA perturbed data sets.  The resulting
+p-values were adjusted for multiple comparisons using the method of Benjamini
+and Hochberg to control the false discovery rate at less than 5%.
+To expedite this process, the KS scores for the random samples were calculated 
+on our high performance computing cluster and the resulting data sets were 
+saved. Here we load these matrices and use them to compute our bootstrapped 
+p-values.
+
+The resulting table of up and down regulated genes (adjusted p < 0.001 and 
+enrichment score > 0.2) complete with entrez and symbol identifiers is saved as 
+`signatures_scores_details.tab`. The list of gene ids (signature files, 
+suitable for submission to CMAP web tool) are saved as `lamin_up.grp` and 
+`lamin_down.grp`.
+
+```{r}
+## Estimating significance of perturbed genes
+
+# 100,000 boostrapped values for each gene
+# based on samples of 84 trt_sh samples
+library(hgu133a.db)
+up_p_adj <- NULL
+down_p_adj <- NULL
+
+fig2b <- function() {
+  kspdf_up <- readRDS("final_data/ks_dist_sh_up_84.rds")
+  kspdf_down <- readRDS("final_data/ks_dist_sh_down_84.rds")
+  f1 <- function(x) { x - up }
+  up_p <- apply(kspdf_up, 2, f1)
+  up_p <- apply(up_p, 1, function(x) { sum(x >= 0)} )
+  up_p <- (up_p + 1) / 100000  # constrain to >= 0.00001 as that is limit of 
+                               # detection
+  up_p_adj <<- p.adjust(up_p, "fdr")
+  
+  f2 <- function(x) { x - down }
+  down_p <- apply(kspdf_down, 2, f2)
+  down_p <- apply(down_p, 1, function(x) { sum(x > 0)} )
+  down_p <- (down_p + 1) / 100000  # constrain to >= 0.00001 as that is limit 
+                                   # of detection
+  down_p_adj <<- p.adjust(down_p, "fdr")
+  
+  value = c(up, -down)
+  adj_p = c(up_p_adj, down_p_adj)
+  Direction = c(rep("Up", length(up)), rep("Down", length(down)))
+  
+  dat <- data.frame(value = value, 
+                    adj_p = -log10(adj_p), 
+                    Direction = Direction)
+  dat <- dat[-which(value == 0),]
+  
+  a <- ggplot(dat, aes(x = value, y = adj_p, color = Direction)) +
+    geom_point(alpha = 0.3, size = 2) + 
+    xlab("KS Score") +
+    ylab("Adjusted p-value (-log)") +
+    scale_color_manual(values = catcolors) +
+    xlim(c(-0.6, 0.6)) +
+    man_theme()
+  a
+}
+
+fig2b_rendered <- fig2b()
+ix.up <- which(up_p_adj < 0.001 & up > 0.2)
+up_sig <- names(up)[ix.up]
+ix.down <- which(down_p_adj < 0.001 & down > 0.2)
+down_sig <- names(down)[ix.down]
+
+write.table(up_sig, 
+            file = "lamin_up.grp", 
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(down_sig, file = "lamin_down.grp", 
+            quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+up.details <- cbind(names(up), up, up_p_adj, "up")[ix.up, ]
+down.details <- cbind(names(down), down, down_p_adj, "down")[ix.down, ]
+details <- rbind(up.details, down.details)
+colnames(details) <- c("L1000 id", "Score", "Adj. P", "Direction")
+details <- as.data.frame(details)
+
+details$entrez <- unlist(mget(as.character(details$`L1000 id`), 
+                              hgu133aENTREZID))
+details$symbol <- unlist(mget(as.character(details$`L1000 id`), 
+                              hgu133aSYMBOL))
+
+write.table(details,
+            file = "signatures_scores_details.tab", 
+            sep = "\t",
+            quote = FALSE,
+            row.names = FALSE,
+            col.names = TRUE)
+
+```
+
+We were interested to know to what extent the gene signature defined in this 
+way was consistent across contexts--at least as far as cell line is 
+concerned. This analysis requires the metadata associated with the LINCS
+instances, which was obtained from the LINCS program and is available in this 
+repository here in the file final_data/metadata.rds. Fig 2b displays the 
+expression of these genes in each instance, grouped by cell line.
+
+```{r}
+library(pheatmap)
+fig2c <- function() {
+  metadata <- readRDS("final_data/metadata.rds")
+  up <- read.delim("lamin_up.grp", 
+                   as.is = TRUE, 
+                   header = FALSE)$V1
+  down <- read.delim("lamin_down.grp", 
+                     as.is = TRUE, 
+                     header = FALSE)$V1
+  
+  dat <- readRDS("final_data/lamin.rds")
+  dat <- apply(dat, 2, rank)
+  dat <- as.data.frame(dat[c(up, down),])
+  ix <- match(gsub("_ZSVC", "", colnames(dat)), metadata$distil_id)
+  sym <- unlist(mget(rownames(dat), hgu133aSYMBOL))
+  dat <- dat[-which(is.na(sym)),]
+  
+  celltype <- metadata$cell_id[ix]
+  names(celltype) <- colnames(dat)
+  genetype <- c(rep("Up", length(up)), rep("Down", length(down)))
+  genetype <- genetype[-which(is.na(sym))]
+  sym <- sym[-which(is.na(sym))]
+  names(genetype) <- rownames(dat)
+  genetype <- data.frame(Genetype = factor(genetype))
+  ann_colors = list(
+    Genetype = c(Up=catcolors[2], Down=catcolors[1])
+  )
+  
+  fig <- pheatmap(dat, 
+            border_color = "#eaeaea", 
+            gaps_col = which(!duplicated(celltype))-1,
+            gaps_row = which(!duplicated(genetype))-1,
+            legend = FALSE, 
+            fontsize_row = 4, 
+            annotation_names_col = FALSE,
+            annotation_names_row = FALSE,
+            labels_row = sym, 
+            fontsize = 8,
+            show_colnames = FALSE, 
+            color = colorRampPalette(c("cornflowerblue", "cadetblue1", 
+                                       "white", "coral", "coral3"))(25),
+            annotation_col = data.frame(Celltype = celltype),
+            annotation_row = genetype,
+            annotation_colors = ann_colors,
+            cluster_rows = FALSE, 
+            cluster_cols = FALSE,
+            cellwidth = 2,
+            silent = TRUE)
+  fig
+}
+```
+
+Finally, we were interested in identifying the cellular processes these genes 
+are involved in. To do this, we performed Gene Ontology enrichment analysis. 
+The results are presented in figure 1c.
+
+```{r}
+fig2d <- function() {
+  library(clusterProfiler)
+  affy.up <- read.delim("lamin_up.grp", 
+                   as.is = TRUE, 
+                   header = FALSE)$V1
+  affy.down <- read.delim("lamin_down.grp", 
+                     as.is = TRUE, 
+                     header = FALSE)$V1
+  
+  ego <- enrichGO(gene = unlist(mget(c(affy.up, affy.down), hgu133aENTREZID)), 
+                    OrgDb = org.Hs.eg.db, 
+                    ont = "BP", 
+                    pAdjustMethod = "fdr", 
+                    pvalueCutoff = 0.05,
+                    readable = TRUE)
+  c <- dotplot(ego, showCategory = 30) + man_theme()
+  c
+}
+
+```
+
+And the parts can then be assembled into a complete figure 2:
+
+```{r}
+library(pheatmap)
+library(ggpubr)
+fig2 <- function() {
+  a <- ggarrange(fig_2a_1 + theme(legend.position = 'none',
+                                  plot.margin = margin(0.5, 0.7, .5, .7, "cm")), 
+                 fig_2a_2, labels=c("A", ""), nrow=1, widths = c(1,3)) +
+                 theme(plot.margin = margin(0.5, 0, .5, 0, "cm"))
+  b <- fig2b_rendered
+  c <- fig2c()
+  d <- fig2d()
+  png(file="fig2.png", res = 300, units="in", height=11, width=10)
+  g <- ggarrange(a, ggarrange(b, c$gtable, ncol = 2, nrow = 1, labels = c("B","C")),
+                  d + scale_color_gradient(low = "red", 
+                                           high="blue", 
+                                           breaks = c(0.02, 0.012, 0.005),
+                                           guide=guide_legend(title = "Adj. P", 
+                                                              reverse = TRUE)),
+                  labels = c(NA, NA, "D"), nrow = 3, heights = c(1,2,2))
+  print(g)
+  dev.off()
+}
+
+fig2()
+
+```
+
+## Figure 3: Drug selection
+
+The next step is to identify FDA approved drugs from the L1000 dataset that can 
+reverse the LMNA knockdown transcriptotype. There are many metrics we could use 
+for this gene set enrichment analysis. We chose to use the XSUM method because 
+there is some evidence it is among the more performant algorithms for CMAP 
+type data (Cheng et al, 2014). The XSUM limits its search to the top N 
+variable genes. However, since the L1000 dataset is already confined to the 
+978 most variant genes in the genome as determined by the LINCS program, we 
+do not filter the geneset further. Therefore, we take the sum of the z-scores 
+for our upregulated genes and subtract the sum of the z-scores of the down 
+regulated genes within the 978 L1000 genes for each drug perturbed instance.
+Again, because there are multiple instances per drug, we collapse these 
+scores to a single score per drug by taking the median.
+
+```{r}
+metadata <- readRDS("final_data/metadata.rds")
+metadata$pert_desc <- tolower(metadata$pert_desc)
+
+fda_ix <- which(metadata$is_fda)
+
+# add the cmaps hits if they are not there already.
+fda_ix <- unique(c(fda_ix, which(metadata$pert_desc %in% 
+  c(
+     'vorinostat',
+     'trichostatin-a',
+     'rifabutin',
+     'loperamide',
+     'crotamiton',
+     'etamivan'
+))))
+
+fda_ix <- fda_ix[which(metadata$is_gold[fda_ix])]
+fda_keys <- paste(metadata$distil_id[fda_ix], "_ZSVC", sep = "")
+
+## Rather than fetch from redis as below, the data can be loaded from file
+# bigFetch <- function(keys, stride=2000) {
+#   data <- matrix(0, ncol = length(keys), nrow = 978)
+#   keys <- split(keys, ceiling(seq_along(fda_keys)/stride))  
+#   
+#   for (i in 1:length(keys)) {
+#     r <- redisMGet(keys[[i]])
+#     for (ii in 1:length(r)) {
+#       if (length(r[[ii]]) >  0) {
+#         data[,((i - 1) * stride + ii)] <- r[[ii]]
+#       }
+#     }
+#     print(i*stride)
+#   }
+#   data
+# }
+# 
+# data <- bigFetch(fda_keys)
+# data <- apply(data, 2, as.numeric)
+# rownames(data) <- names(redisGet(fda_keys[1]))
+
+# the result of the above was saved in lincs_fda_zscores.rds
+data <- readRDS("final_data/lincs_fda_zscores.rds")
+missing <- which(apply(data, 2, sum)==0)
+data <- data[,-missing]
+fda_ix <- fda_ix[-missing]
+drugs <- metadata$pert_desc[fda_ix]
+
+up <- read.delim("lamin_up.grp", as.is=TRUE, header=FALSE)$V1
+down <- read.delim("lamin_down.grp", as.is=TRUE, header=FALSE)$V1
+
+xsum <- function(x, up, down, n=489) {
+  up.ix <- which(rownames(x) %in% up)
+  down.ix <- which(rownames(x) %in% down)
+  f <- function(a) {
+    a_r <- rank(a)
+    changed <- a * (a_r > ( length(a_r) - n) | a_r < n)
+    sum(changed[up.ix]) - sum(changed[down.ix], na.rm=TRUE)  
+  }
+  apply(x, 2, f)
+}
+scores <- xsum(data, up, down)
+names(scores) <- metadata$pert_desc[fda_ix]
+saveRDS(scores, "lincs_xsum.rds")
+
+```
+
+Again, we are interested in drugs whose transcriptional effects are specific 
+to the LMNA signature (in theory, this would minimize side effects and reduce 
+false positives related to generic phenomena like osmotic shifts, etc.). 
+Therefore, we scored 10,000 random gene signatures (each with the 
+same number of "up" and "down" regulated genes as the LMNA signature) to 
+esimate how specific each drug was to the LMNA signature. This was performed 
+on our HPC cluster (code can be found in `drug_perm.R`) Using the resulting 
+random signature score matrix, we calculated the estimated p-value for each 
+drug. Since there are multiple instances for each drug, we first summarize 
+the scores for each drug by taking the median. We then see how many of the 
+10,000 random signature scores for each drug more negative than the LMNA 
+signature score (more negative because we are trying to **reverse** the 
+effects of LMNA knockdown). Dividing this frequency by 10,000 gives us our 
+estimated p-value.
+
+```{r}
+library(ggrepel)
+fig3ab <- function() {
+  scores <- readRDS("final_data/lincs_xsum.rds")
+  spec <- numeric()
+  drugs <- names(scores)
+  for(s in unique(drugs)) {
+    spec <- c(spec, median(scores[which(drugs == s)], na.rm = TRUE))
+  }
+  names(spec) <- unique(drugs)
+  
+  # we load our 10,000 permutations data matrix from file
+  specpdf <- readRDS("final_data/xsum_raw_median_489_60_23.rds")
+  ix <- match(names(spec), rownames(specpdf))
+  specpdf <- specpdf[ix,]
+  spec_p <- apply(sweep(specpdf, 1, spec, "-" ), 1, 
+                  function(x) { sum(x>0)}) /  10001
+  spec_p <- spec_p * (spec < 0)
+  spec_p <- 1-spec_p
+  spec_p <- spec_p[order(spec_p)]
+  spec_p <- spec_p[-which(is.na(names(spec_p)))]
+  df <- data.frame(drug = names(spec_p),
+                   y = spec_p, 
+                   x = 1:length(spec_p), 
+                   ARB = grepl("artan", names(spec_p)),
+                   HDAC = grepl("ostat", names(spec_p)),
+                   CMAP = names(spec_p) %in%  c(     'vorinostat',
+                   'trichostatin-a',
+                   'rifabutin',
+                   'loperamide',
+                   'crotamiton',
+                   'etamivan'
+              ))
+  df <- df[order(spec_p),]
+  
+  l = sum(df$CMAP)
+  labels_c <- data.frame(x = rep(seq(400, 400, length.out = l)), 
+                         label = paste(c(1:l), ". ", df$drug[df$CMAP], sep = ""), 
+                         y = seq(0, .4, length.out = l),
+                         yy = df$y[df$CMAP],
+                         xx = df$x[df$CMAP])
+  cmap <- ggplot(df, aes(x, y)) +
+    scale_color_manual(values = c(NA, "brown")) +
+    scale_fill_manual(values = c(NA, "orange")) +
+    geom_text_repel(
+      data = labels_c,
+      nudge_y = -0.15,
+      force = 1,
+      aes(xx, yy, label = c(1:l)),
+      color = '#444444',
+      size = 3.5,
+      fontface = "bold", 
+      seed = 105) + 
+    geom_point(color = "grey", shape = 19, size = 0.7) +
+    geom_point(aes(color = CMAP, fill = CMAP), shape = 21) +
+    geom_text(
+      data = labels_c,
+      hjust = 0,
+      aes(x, y, label = label),
+      color = '#444444',
+      size = 3.5) +
+    ylab("P-value") +
+    xlab("Drugs Sorted by Enrichment") +
+    ggtitle("Top CMAP candidates") +
+    theme(legend.position = "none") +
+    scale_y_continuous(limits = c(1.1, -0.1), breaks = seq(0, 1, 0.1), trans = "reverse") +
+    scale_x_continuous(limits = c(-50, 650), breaks = seq(0, 650, 150)) 
+  
+  l_h = sum(df$ARB)
+  labels_h <- data.frame(x = rep(seq(400, 400, length.out = l_h)), 
+                         label = paste(c(1:l_h), ". ", df$drug[df$ARB], sep = ""), 
+                         y = seq(0, .47, length.out = l_h),
+                         yy = df$y[df$ARB],
+                         xx = df$x[df$ARB] + 1:l_h / l_h) # give geom_text_repel a nudge in right
+  # direction for overlapping points
+  arb_sh <- ggplot(df, aes(x, y)) +
+    scale_color_manual(values = c(NA, "brown")) +
+    scale_fill_manual(values = c(NA, "orange")) +
+    geom_text_repel(
+      data = labels_h,
+      nudge_y = -0.15,
+      force = 1,
+      aes(xx, yy, label = c(1:l_h)),
+      color = '#444444',
+      size = 3.5,
+      fontface = "bold",
+      seed = 105) + 
+    geom_point(color = "grey", shape = 21, size = .7) +
+    geom_point(aes(color = ARB, fill = ARB), shape = 21) +
+    geom_text(
+      data = labels_h,
+      hjust = 0,
+      aes(x, y, label = label),
+      color = '#444444',
+      
+      size = 3.5) + 
+    ylab("P-value") +
+    xlab("Drugs Sorted by Enrichment") +
+    ggtitle("Angiotensin Receptor Blockers") +
+    theme(legend.position = "none") +
+    scale_y_continuous(limits = c(1.1, -0.1), breaks = seq(0, 1, 0.1), trans = "reverse") +
+    scale_x_continuous(limits = c(-50, 650), breaks = seq(0, 650, 150)) 
+  
+  list(cmap, arb_sh) 
+}
+
+```
+
+We wanted to examine the expression of the genes in the LMNA 
+signature in high and low scoring ARBs. Expression data for the ARB treated 
+samples was again extracted from our Redis database as saved as 
+`final_data/lincs_arbs.rds`, available in this repository. We then looked 
+at the expression in two high scoring arbs vs. a low scoring arbs to see 
+what the patterns of expression might be and get a sense for whether all or 
+only some of the signature genes were consistently regulated.
+
+```{r}
+library(ComplexHeatmap)
+library(hgu133a.db)
+library(circlize)
+fig3c <- function() {
+  
+  metadata <- readRDS("final_data/metadata.rds")
+  up <- read.delim("lamin_up.grp", 
+                   as.is = TRUE, 
+                   header = FALSE)$V1
+  down <- read.delim("lamin_down.grp", 
+                     as.is = TRUE, 
+                     header = FALSE)$V1
+  
+  dat <- readRDS("final_data/lincs_arbs.rds")
+  dat <- as.data.frame(dat[c(up, down),])
+  ix <- match(gsub("_ZSVC", "", colnames(dat)), metadata$distil_id)
+  sym <- unlist(mget(rownames(dat), hgu133aSYMBOL))
+  dat <- dat[-which(is.na(sym)),]
+  
+  drug <- metadata$pert_desc[ix]
+  names(drug) <- colnames(dat)
+  genetype <- c(rep("Up", length(up)), rep("Down", length(down)))
+  genetype <- genetype[-which(is.na(sym))]
+  sym <- sym[-which(is.na(sym))]
+  names(genetype) <- rownames(dat)
+  genetype <- data.frame(genetype = factor(genetype, 
+                                           levels = c("Up", "Down"), 
+                                           labels = c("Up Regulated Gene Signature", 
+                                                      "Down Regulated Gene Signature")))
+  
+  dat <- dat[, order(drug)]
+  drug <- drug[order(drug)]
+  ix <- which(drug %in% c("olmesartan", "irbesartan", "telmisartan"))
+  dat <- dat[, ix]
+  drug <- drug[ix]
+  rownames(dat) <- sym
+  
+  hm <- function(dat, 
+                 title, 
+                 rownames = FALSE, 
+                 cluster = FALSE,
+                 legend = TRUE, 
+                 legend_title = "Z-score") {
+    
+    col = colorRamp2(c(-2, -1, 0, 1, 2),
+                     c("cornflowerblue", 
+                       "cadetblue1", 
+                       "white", 
+                       "coral", 
+                       "coral3"))
+    
+    med <- rowAnnotation(Medians = apply(dat, 1, median, na.rm = TRUE),
+                         col = list("Medians" = col), 
+                         show_legend = FALSE,
+                         border=TRUE,
+                         annotation_width = unit(c(5), "cm"),
+                         annotation_name_gp = gpar(fontsize = 10, font=2))
+    map <- Heatmap(dat,
+                   split = genetype,
+                   column_title_gp = gpar(fontsize = 12, font = 2),
+                   row_title_gp = gpar(fontsize = 8, font = 2),
+                   rect_gp = gpar(col = "#efefef", lty = 1, lwd = 1),
+                   column_title = title,
+                   col = col,
+                   show_heatmap_legend = legend,
+                   show_row_names = rownames,
+                   show_column_names = TRUE,
+                   column_names_gp = gpar(fontsize=1, col = NA),
+                   row_names_gp = gpar(fontsize = 5),
+                   right_annotation = med,
+                   cluster_rows = cluster,
+                   show_parent_dend_line = FALSE,
+                   heatmap_legend_param = list(title = legend_title, 
+                                               title_gp = gpar(fontsize = 8, 
+                                                               font = 2),
+                                               legend_width = unit(3, "cm"),
+                                               legend_direction = "horizontal",
+                                               labels_gp = gpar(fontsize = 6)),
+                   cluster_columns = FALSE)
+    
+    map
+  }
+
+  hm1 <- hm(as.matrix(dat[ , which(drug == "olmesartan")]), "Olmesartan", cluster = TRUE,
+            rownames = FALSE)
+  hm2 <- hm(as.matrix(dat[ , which(drug == "irbesartan")]), "Irbesartan", 
+            rownames = FALSE,
+            legend = FALSE)
+  hm3 <- hm(as.matrix(dat[ , which(drug == "telmisartan")]), "Telmisartan", 
+            rownames = TRUE,
+            legend = FALSE)
+  
+  hm1 + hm2 + hm3
+
+}
+
+```
+
+The figure as it appears in the manuscript can then be assembled.
+
+```{r}
+library(ggpubr)
+fig3 <- function() {
+  ab <- fig3ab()
+  a <- ab[[1]]
+  b <- ab[[2]]
+  c <- fig3c()
+  cc <- grid.grabExpr(draw(c, 
+             row_dend_side = "left", 
+             gap = unit(c(5), "mm"),
+             row_sub_title_side = "left",
+             heatmap_legend_side = "bottom"))
+  
+  
+  png(file= "fig3.png", res = 300, units = "in", height = 8, width = 10)
+  g <- ggarrange(ggarrange(a + 
+                        man_theme() +
+                        theme(plot.margin = unit(c(0.5,1, 0.5, 0.5), "cm")) +
+                        theme(legend.position = "none"), 
+                      b + 
+                        man_theme() + 
+                        theme(plot.margin = unit(c(0.5,1, 0.5, 0.5), "cm")) +
+                        theme(legend.position = "none"), 
+                      ncol = 1, nrow = 2, labels = c("A", "B")),
+            cc, labels = c(NA, "C"), nrow = 1, ncol = 2, widths = c(1.3,1.7))
+  print(g)
+  dev.off()
+  
+}
+fig3()
+```
+
+To further investigate whether the observed effect were specific to Olmesartan 
+and/or irbesartan or were, rather, some sort of class effect of ARBs, we 
+analyzed the ARBs in the dataset as a class. This again required permutation 
+against random gene signatures, so the result is shown below but this code is 
+not executed when rendering this document.
+
+```{r, eval=FALSE}
+data <- readRDS("final_data/lincs_fda_zscores.rds")
+metadata <- readRDS("final_data/metadata.rds")
+ix <- match(colnames(data), metadata$distil_id)
+metadata <- metadata[ix, ]
+drugs <- rep(NA, nrow(metadata))
+arb.ix <- grep("artan", metadata$pert_desc)
+drugs[arb.ix] <- "ARB"
+drugs[-arb.ix] <- "Non-ARB"
+
+xsum <- function(x, up, down, n=489) {
+  up.ix <- which(rownames(x) %in% up)
+  down.ix <- which(rownames(x) %in% down)
+  f <- function(a) {
+    a_r <- rank(a)
+    changed <- a * (a_r > ( length(a_r) - n) | a_r < n)
+    sum(changed[up.ix]) - sum(changed[down.ix])  
+  }
+  apply(x, 2, f)
+}
+
+# 10,000 permutations for random signatures vs. the arb class
+r <- foreach(i=1:10000, .combine="cbind") %dopar% {  
+  up <- sample(rownames(data), 60)
+  down <- sample(rownames(data), 23)
+  scores <- xsum(data, up, down)
+  names(scores) <- drugs
+  spec <- numeric()
+  for(s in unique(drugs)) {
+    spec <- c(spec, median(scores[which(drugs == s)], na.rm=TRUE))
+  }
+  names(spec) <- unique(drugs)
+  spec
+}
+
+# score: -5.8649, p = 0.0147
+
+```
+
+
+## Figure 4
+
+The data for Figure 4 is provided in `final_data/validation.tab`. The analysis 
+was performed as follows, including calculation of t-test p-values from means 
+and sds. The output of ggsignif from the commented out sections below was used 
+as the basis of adding p-value annotations to the figure with vector image 
+editting software.
+
+```{r}
+
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(ggsignif)
+library(stringr)
+library(ggpubr)
+
+ttest_uev <- function(m1,m2,s1,s2,n1,n2,m0=0,equal.variance=FALSE)
+{
+    se <- sqrt( (s1^2/n1) + (s2^2/n2) )
+    df <- ( (s1^2/n1 + s2^2/n2)^2 )/( (s1^2/n1)^2/(n1-1) + (s2^2/n2)^2/(n2-1) )
+    t <- (m1-m2-m0)/se 
+    2*pt(-abs(t),df)    
+}
+
+
+encode_ix <- function(x, ix) {
+  dat <- cbind(x,ix)
+  unlist(apply(dat, 1, function(x) {
+    ix <- str_pad(x[2], 3, pad="0")
+    val <- sprintf("%.6f", round(x[1], 6))
+    as.numeric(paste0(val,ix))
+  }))
+}
+
+decode_ix <- function(x) {
+  x <- sprintf("%.9f", x)
+  ix <- as.numeric( str_sub(as.character(x), -3, -1))
+  val <- as.numeric( str_sub(as.character(x), 0, -4))
+  return(list(val=val, index=ix))
+}
+
+ttest_single <- function(x, sem, n) {
+  1 - pt(x/(sem*sqrt(n))**2, df = n - 1)
+}
+
+dat <- read.delim("final_data/validation_data.tab", 
+                  sep = "\t", 
+                  as.is = TRUE, 
+                  header = TRUE)
+
+dat$Treatment = factor(dat$Treatment, levels=c("DMSO", 
+                                          "Olmesartan",
+                                          "Irbesartan",
+                                          "Captopril",
+                                          "Enalapril"))
+
+dat$Genotype = factor(dat$Genotype, levels = c("WT", "LMNA_mut"),
+                      labels = c("Healthy Control", "LMNA Mutation"))
+
+dat$Measure = factor(dat$Measure, levels = unique(dat$Measure),
+                     labels = c("Rate (Beats Per Minute)", 
+                                "Contraction (\u03BCm/s)", 
+                                "Relaxation (\u03BCm/s)", 
+                                "MYH6", 
+                                "MYH7", 
+                                "TNNT2"))
+
+ttest_uev2 <- function(x, y, ...)
+{
+    s1 <- dat$SD[decode_ix(x)$index]
+    s2 <- dat$SD[decode_ix(y)$index]
+    m1 <- decode_ix(x)$val
+    m2 <- decode_ix(y)$val
+    n1 <- dat$N[decode_ix(x)$index]
+    n2 <- dat$N[decode_ix(y)$index]
+    se <- sqrt( (s1^2/n1) + (s2^2/n2) )
+    df <- ( (s1^2/n1 + s2^2/n2)^2 )/( (s1^2/n1)^2/(n1-1) + (s2^2/n2)^2/(n2-1) )
+    t <- (m1-m2)/se 
+    pv <- round(2*pt(-abs(t),df), 2)    
+    print(paste(x, y, decode_ix(x)$index, decode_ix(y)$index, 
+                dat$Genotype[decode_ix(x)$index], dat$Measure[decode_ix(x)$index], 
+                dat$Treatment[decode_ix(x)$index], 
+                dat$Treatment[decode_ix(y)$index], pv))
+    return(list(p.value = pv))
+}
+
+ix <- grep("ion|ate", dat$Measure)
+b <- ggplot(dat[ix,], aes(x = Treatment, y=Mean, sd=SD)) +
+  geom_errorbar(aes(ymin = Mean, 
+                    ymax = Mean + SD/sqrt(N) * (Mean > 0) * 1), 
+                width = .2) +
+  geom_bar(stat="identity", width=0.5) +
+  geom_bar(stat = "identity", width = 0.5, color="black", show.legend=FALSE) +
+  facet_grid(vars(Measure), vars(Genotype), scales = "free") +
+  theme_bw() + 
+  xlab("Treatment") + 
+  ylab("Value") +
+  scale_y_continuous(expand=expand_scale(c(0.05,0.35))) +
+ # geom_signif(mapping =  aes(x = Treatment, y = encode_ix(Mean, ix)),
+ #             textsize = 4,
+ #             vjust=-1.2,
+ #             map_signif_level = c("*"=0.0500001, " " = 1) ,
+ #             comparisons = list(c("DMSO", "Olmesartan"),
+ #                                c("DMSO", "Irbesartan"),
+ #                                c("DMSO", "Captopril"),
+ #                                c("DMSO", "Enalapril"),
+ #                                c("Olmesartan", "Irbesartan"),
+ #                                c("Olmesartan", "Captopril"),
+ #                                c("Olmesartan", "Enalapril")),
+ #             test = ttest_uev2) +
+  theme(axis.text.x=element_text(angle=320, hjust=0),
+        strip.background = element_rect(fill = NA, color = "black"),
+        strip.text = element_text(face = "bold"),
+        axis.title = element_text(face = "bold"))
+
+
+
+ix <- grep("MYH|TNNT", dat$Measure)
+a <- ggplot(dat[ix,], aes(x = Treatment, y=Mean, sd=SD)) +
+  geom_errorbar(aes(ymin = Mean, 
+                    ymax = Mean + SD/sqrt(N) * (Mean > 0) * 1), 
+                width = .2) +
+  geom_bar(stat="identity", width=0.5) +
+  geom_bar(stat = "identity", width = 0.5, color="black", show.legend=FALSE) +
+  facet_grid(vars(Measure), vars(Genotype), scales = "free") +
+  theme_bw() + 
+  xlab("Treatment") + 
+  ylab("Value (Fold Change vs.DMSO") +
+ # geom_signif(mapping =  aes(x = Treatment, y = encode_ix(Mean, ix)),
+ #             textsize = 4,
+ #             vjust=-1.2,
+ #             map_signif_level = c("*"=0.0500001, " " = 1) ,
+ #             comparisons = list(c("DMSO", "Olmesartan"),
+ #                                c("DMSO", "Irbesartan"),
+ #                                c("DMSO", "Captopril"),
+ #                                c("DMSO", "Enalapril"),
+ #                                c("Olmesartan", "Irbesartan"),
+ #                                c("Olmesartan", "Captopril"),
+ #                                c("Olmesartan", "Enalapril")),
+ #             test = ttest_uev2) +
+  scale_y_continuous(expand=expand_scale(c(0.05,0.35))) +
+  theme(axis.text.x=element_text(angle=320, hjust=0),
+        strip.background = element_rect(fill = NA, color = "black"),
+        strip.text = element_text(face = "bold"),
+        axis.title = element_text(face = "bold"))
+
+  png(file= "fig4.png", res = 300, units = "in", height = 8, width = 10)
+  g <- ggarrange(a + 
+              theme(plot.margin = unit(c(0.5,1, 0.5, 0.5), "cm")) +
+              theme(legend.position = "none"), 
+            b + 
+              theme(plot.margin = unit(c(0.5,1, 0.5, 0.5), "cm")) +
+              theme(legend.position = "none"), 
+            ncol = 2, nrow = 1, labels = c("A", "B"))
+  print(g)
+  dev.off()
+
+
+```
