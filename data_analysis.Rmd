@@ -12,7 +12,11 @@ date: "April 19, 2019"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, eval=TRUE)
+knitr::opts_chunk$set(message = FALSE, 
+                      warning = FALSE, 
+                      echo = TRUE, 
+                      eval=TRUE)
+
 man_theme <- function() {
   theme_bw() +
     theme(axis.text.x = element_text(size = 8,
@@ -125,7 +129,7 @@ data <- do.call(cbind, redisMGet(lam_keys))
 ids <- genes <- rownames(data)
 data <- apply(data, 2, as.numeric)
 rownames(data) <- ids
-saveRDS(data, file="data/lamin.rds")
+saveRDS(data, file="final_data/lamin.rds")
 
 ```
 
@@ -266,9 +270,12 @@ response is *specific* to LMNA perturbation, and not a generic response.  To
 quantify the extent to which the observed KS scores for each genes were
 specific to LMNA perturbation, we calculated corresponding KS scores for
 100,000 random sets of shRNA treated samples (84 samples in each set to match
-the LMNA set) in the LINCS data.  This calculation was performed exactl as 
+the LMNA set) in the LINCS data.  This calculation was performed exactly as 
 above except that these random sample sets were used in place of the LMNA 
-perturbed sample. This data then allowed us to empirically
+perturbed sample. The resulting datasets are available in this repository as 
+`final_data/ks_dist_sh_up_84.rds` and `final_data/ks_dist_sh_down_84.rds`.
+
+This data then allowed us to empirically
 estimated the significance (i.e., bootstrapped p-value) of the KS scores
 calculated for each gene in our LMNA perturbed data sets.  The resulting
 p-values were adjusted for multiple comparisons using the method of Benjamini
@@ -285,15 +292,13 @@ suitable for submission to CMAP web tool) are saved as `lamin_up.grp` and
 `lamin_down.grp`.
 
 ```{r}
-## Estimating significance of perturbed genes
-
-# 100,000 boostrapped values for each gene
-# based on samples of 84 trt_sh samples
 library(hgu133a.db)
 up_p_adj <- NULL
 down_p_adj <- NULL
 
 fig2b <- function() {
+  # 100,000 boostrapped values for each gene
+  # based on samples of 84 trt_sh samples
   kspdf_up <- readRDS("final_data/ks_dist_sh_up_84.rds")
   kspdf_down <- readRDS("final_data/ks_dist_sh_down_84.rds")
   f1 <- function(x) { x - up }
@@ -319,17 +324,18 @@ fig2b <- function() {
                     Direction = Direction)
   dat <- dat[-which(value == 0),]
   
-  a <- ggplot(dat, aes(x = value, y = adj_p, color = Direction)) +
+  ggplot(dat, aes(x = value, y = adj_p, color = Direction)) +
     geom_point(alpha = 0.3, size = 2) + 
     xlab("KS Score") +
     ylab("Adjusted p-value (-log)") +
     scale_color_manual(values = catcolors) +
     xlim(c(-0.6, 0.6)) +
     man_theme()
-  a
+  
 }
 
 fig2b_rendered <- fig2b()
+
 ix.up <- which(up_p_adj < 0.001 & up > 0.2)
 up_sig <- names(up)[ix.up]
 ix.down <- which(down_p_adj < 0.001 & down > 0.2)
@@ -509,13 +515,14 @@ fda_ix <- unique(c(fda_ix, which(metadata$pert_desc %in%
 ))))
 
 fda_ix <- fda_ix[which(metadata$is_gold[fda_ix])]
-fda_keys <- paste(metadata$distil_id[fda_ix], "_ZSVC", sep = "")
 
-## Rather than fetch from redis as below, the data can be loaded from file
+# fda_keys <- paste(metadata$distil_id[fda_ix], "_ZSVC", sep = "")
+# 
+# # Rather than fetch from redis as below, the data can be loaded from file
 # bigFetch <- function(keys, stride=2000) {
 #   data <- matrix(0, ncol = length(keys), nrow = 978)
-#   keys <- split(keys, ceiling(seq_along(fda_keys)/stride))  
-#   
+#   keys <- split(keys, ceiling(seq_along(fda_keys)/stride))
+# 
 #   for (i in 1:length(keys)) {
 #     r <- redisMGet(keys[[i]])
 #     for (ii in 1:length(r)) {
@@ -531,8 +538,8 @@ fda_keys <- paste(metadata$distil_id[fda_ix], "_ZSVC", sep = "")
 # data <- bigFetch(fda_keys)
 # data <- apply(data, 2, as.numeric)
 # rownames(data) <- names(redisGet(fda_keys[1]))
+# saveRDS(data, "final_data/lincs_fda_zscores.rds")
 
-# the result of the above was saved in lincs_fda_zscores.rds
 data <- readRDS("final_data/lincs_fda_zscores.rds")
 missing <- which(apply(data, 2, sum)==0)
 data <- data[,-missing]
@@ -554,7 +561,7 @@ xsum <- function(x, up, down, n=489) {
 }
 scores <- xsum(data, up, down)
 names(scores) <- metadata$pert_desc[fda_ix]
-saveRDS(scores, "lincs_xsum.rds")
+saveRDS(scores, "final_data/lincs_xsum.rds")
 
 ```
 
@@ -593,7 +600,6 @@ fig3ab <- function() {
   spec_p <- spec_p * (spec < 0)
   spec_p <- 1-spec_p
   spec_p <- spec_p[order(spec_p)]
-  spec_p <- spec_p[-which(is.na(names(spec_p)))]
   df <- data.frame(drug = names(spec_p),
                    y = spec_p, 
                    x = 1:length(spec_p), 
@@ -625,15 +631,17 @@ fig3ab <- function() {
       color = '#444444',
       size = 3.5,
       fontface = "bold", 
-      seed = 105) + 
+      seed = 105, 
+      na.rm = TRUE) + 
     geom_point(color = "grey", shape = 19, size = 0.7) +
-    geom_point(aes(color = CMAP, fill = CMAP), shape = 21) +
+    geom_point(aes(color = CMAP, fill = CMAP), shape = 21, na.rm=TRUE) +
     geom_text(
       data = labels_c,
       hjust = 0,
       aes(x, y, label = label),
       color = '#444444',
-      size = 3.5) +
+      size = 3.5,
+      na.rm = TRUE) +
     ylab("P-value") +
     xlab("Drugs Sorted by Enrichment") +
     ggtitle("Top CMAP candidates") +
@@ -659,9 +667,10 @@ fig3ab <- function() {
       color = '#444444',
       size = 3.5,
       fontface = "bold",
-      seed = 105) + 
+      seed = 105,
+      na.rm = TRUE) + 
     geom_point(color = "grey", shape = 21, size = .7) +
-    geom_point(aes(color = ARB, fill = ARB), shape = 21) +
+    geom_point(aes(color = ARB, fill = ARB), shape = 21, na.rm=TRUE) +
     geom_text(
       data = labels_h,
       hjust = 0,
@@ -692,7 +701,6 @@ only some of the signature genes were consistently regulated.
 ```{r}
 library(ComplexHeatmap)
 library(hgu133a.db)
-library(circlize)
 fig3c <- function() {
   
   metadata <- readRDS("final_data/metadata.rds")
@@ -791,7 +799,7 @@ fig3c <- function() {
 The figure as it appears in the manuscript can then be assembled.
 
 ```{r}
-library(ggpubr)
+library(circlize)
 fig3 <- function() {
   ab <- fig3ab()
   a <- ab[[1]]
@@ -802,7 +810,6 @@ fig3 <- function() {
              gap = unit(c(5), "mm"),
              row_sub_title_side = "left",
              heatmap_legend_side = "bottom"))
-  
   
   png(file= "fig3.png", res = 300, units = "in", height = 8, width = 10)
   g <- ggarrange(ggarrange(a + 

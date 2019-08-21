@@ -1556,58 +1556,14 @@ data &lt;- do.call(cbind, redisMGet(lam_keys))
 ids &lt;- genes &lt;- rownames(data)
 data &lt;- apply(data, 2, as.numeric)
 rownames(data) &lt;- ids
-saveRDS(data, file=&quot;data/lamin.rds&quot;)</code></pre>
+saveRDS(data, file=&quot;final_data/lamin.rds&quot;)</code></pre>
 <p>Robustly identifying differentially expressed genes (DEGs) continues to be an active area of research in itself. It is widely known that large scale gene expression efforts are plagued with “batch effects” wherein the variation between samples is overwhelmed by variation between plates, technicians, dates, labs, etc. We took two steps to minimize batch effects. First, we calculated z-scores using control samples from the same plate as the treated cells, thereby eliminating systematic biases between plates. Second, we converted our z-scores to ranks, thereby eliminating any isotonic (rank invariant) shifts in z-scores that may arise between batches. As we converted to rank space to eliminate isotonic batch effects, we proceeded with non-parametric approach to DEG identification.</p>
 <p>To identify genes exhibiting consistent differential expression, we performed a “rank of ranks” analysis. First, the data was ranked sample-wise as described above. Second, the entire matrix of ranks (978 genes by 84 shRNA samples) was ranked and Kolmogorov Smirnov analysis was performed on the position of each occurrence of each gene within this vector of ranks. The resulting analysis quantifies the extent to which the expression of each gene was consistently biased up or down relative to all other genes.</p>
 <p>This process is illustrated for 8 representative samples in figure 2A.</p>
 <pre class="r"><code>library(ggplot2)
 data &lt;- readRDS(&quot;final_data/lamin.rds&quot;)
-library(hgu133a.db)</code></pre>
-<pre><code>## Loading required package: AnnotationDbi</code></pre>
-<pre><code>## Loading required package: stats4</code></pre>
-<pre><code>## Loading required package: BiocGenerics</code></pre>
-<pre><code>## Loading required package: parallel</code></pre>
-<pre><code>## 
-## Attaching package: &#39;BiocGenerics&#39;</code></pre>
-<pre><code>## The following objects are masked from &#39;package:parallel&#39;:
-## 
-##     clusterApply, clusterApplyLB, clusterCall, clusterEvalQ,
-##     clusterExport, clusterMap, parApply, parCapply, parLapply,
-##     parLapplyLB, parRapply, parSapply, parSapplyLB</code></pre>
-<pre><code>## The following objects are masked from &#39;package:stats&#39;:
-## 
-##     IQR, mad, sd, var, xtabs</code></pre>
-<pre><code>## The following objects are masked from &#39;package:base&#39;:
-## 
-##     anyDuplicated, append, as.data.frame, basename, cbind,
-##     colnames, dirname, do.call, duplicated, eval, evalq, Filter,
-##     Find, get, grep, grepl, intersect, is.unsorted, lapply, Map,
-##     mapply, match, mget, order, paste, pmax, pmax.int, pmin,
-##     pmin.int, Position, rank, rbind, Reduce, rownames, sapply,
-##     setdiff, sort, table, tapply, union, unique, unsplit, which,
-##     which.max, which.min</code></pre>
-<pre><code>## Loading required package: Biobase</code></pre>
-<pre><code>## Welcome to Bioconductor
-## 
-##     Vignettes contain introductory material; view with
-##     &#39;browseVignettes()&#39;. To cite Bioconductor, see
-##     &#39;citation(&quot;Biobase&quot;)&#39;, and for packages &#39;citation(&quot;pkgname&quot;)&#39;.</code></pre>
-<pre><code>## Loading required package: IRanges</code></pre>
-<pre><code>## Loading required package: S4Vectors</code></pre>
-<pre><code>## 
-## Attaching package: &#39;S4Vectors&#39;</code></pre>
-<pre><code>## The following object is masked from &#39;package:base&#39;:
-## 
-##     expand.grid</code></pre>
-<pre><code>## 
-## Attaching package: &#39;IRanges&#39;</code></pre>
-<pre><code>## The following object is masked from &#39;package:grDevices&#39;:
-## 
-##     windows</code></pre>
-<pre><code>## Loading required package: org.Hs.eg.db</code></pre>
-<pre><code>## </code></pre>
-<pre><code>## </code></pre>
-<pre class="r"><code>library(reshape2)
+library(hgu133a.db)
+library(reshape2)
 library(foreach)
 
 gg &lt;- unlist(mget(rownames(data), hgu133aSYMBOL))
@@ -1706,17 +1662,16 @@ for(g in unique(genes)) {
 }
 names(up) &lt;- unique(genes)
 names(down) &lt;- unique(genes)</code></pre>
-<p>Finally, we are interested in identifying those genes whose transcriptional response is <em>specific</em> to LMNA perturbation, and not a generic response. To quantify the extent to which the observed KS scores for each genes were specific to LMNA perturbation, we calculated corresponding KS scores for 100,000 random sets of shRNA treated samples (84 samples in each set to match the LMNA set) in the LINCS data. This calculation was performed exactl as above except that these random sample sets were used in place of the LMNA perturbed sample. This data then allowed us to empirically estimated the significance (i.e., bootstrapped p-value) of the KS scores calculated for each gene in our LMNA perturbed data sets. The resulting p-values were adjusted for multiple comparisons using the method of Benjamini and Hochberg to control the false discovery rate at less than 5%. To expedite this process, the KS scores for the random samples were calculated on our high performance computing cluster and the resulting data sets were saved. Here we load these matrices and use them to compute our bootstrapped p-values.</p>
+<p>Finally, we are interested in identifying those genes whose transcriptional response is <em>specific</em> to LMNA perturbation, and not a generic response. To quantify the extent to which the observed KS scores for each genes were specific to LMNA perturbation, we calculated corresponding KS scores for 100,000 random sets of shRNA treated samples (84 samples in each set to match the LMNA set) in the LINCS data. This calculation was performed exactly as above except that these random sample sets were used in place of the LMNA perturbed sample. The resulting datasets are available in this repository as <code>final_data/ks_dist_sh_up_84.rds</code> and <code>final_data/ks_dist_sh_down_84.rds</code>.</p>
+<p>This data then allowed us to empirically estimated the significance (i.e., bootstrapped p-value) of the KS scores calculated for each gene in our LMNA perturbed data sets. The resulting p-values were adjusted for multiple comparisons using the method of Benjamini and Hochberg to control the false discovery rate at less than 5%. To expedite this process, the KS scores for the random samples were calculated on our high performance computing cluster and the resulting data sets were saved. Here we load these matrices and use them to compute our bootstrapped p-values.</p>
 <p>The resulting table of up and down regulated genes (adjusted p &lt; 0.001 and enrichment score &gt; 0.2) complete with entrez and symbol identifiers is saved as <code>signatures_scores_details.tab</code>. The list of gene ids (signature files, suitable for submission to CMAP web tool) are saved as <code>lamin_up.grp</code> and <code>lamin_down.grp</code>.</p>
-<pre class="r"><code>## Estimating significance of perturbed genes
-
-# 100,000 boostrapped values for each gene
-# based on samples of 84 trt_sh samples
-library(hgu133a.db)
+<pre class="r"><code>library(hgu133a.db)
 up_p_adj &lt;- NULL
 down_p_adj &lt;- NULL
 
 fig2b &lt;- function() {
+  # 100,000 boostrapped values for each gene
+  # based on samples of 84 trt_sh samples
   kspdf_up &lt;- readRDS(&quot;final_data/ks_dist_sh_up_84.rds&quot;)
   kspdf_down &lt;- readRDS(&quot;final_data/ks_dist_sh_down_84.rds&quot;)
   f1 &lt;- function(x) { x - up }
@@ -1742,17 +1697,18 @@ fig2b &lt;- function() {
                     Direction = Direction)
   dat &lt;- dat[-which(value == 0),]
   
-  a &lt;- ggplot(dat, aes(x = value, y = adj_p, color = Direction)) +
+  ggplot(dat, aes(x = value, y = adj_p, color = Direction)) +
     geom_point(alpha = 0.3, size = 2) + 
     xlab(&quot;KS Score&quot;) +
     ylab(&quot;Adjusted p-value (-log)&quot;) +
     scale_color_manual(values = catcolors) +
     xlim(c(-0.6, 0.6)) +
     man_theme()
-  a
+  
 }
 
 fig2b_rendered &lt;- fig2b()
+
 ix.up &lt;- which(up_p_adj &lt; 0.001 &amp; up &gt; 0.2)
 up_sig &lt;- names(up)[ix.up]
 ix.down &lt;- which(down_p_adj &lt; 0.001 &amp; down &gt; 0.2)
@@ -1853,9 +1809,8 @@ fig2c &lt;- function() {
 }</code></pre>
 <p>And the parts can then be assembled into a complete figure 2:</p>
 <pre class="r"><code>library(pheatmap)
-library(ggpubr)</code></pre>
-<pre><code>## Loading required package: magrittr</code></pre>
-<pre class="r"><code>fig2 &lt;- function() {
+library(ggpubr)
+fig2 &lt;- function() {
   a &lt;- ggarrange(fig_2a_1 + theme(legend.position = &#39;none&#39;,
                                   plot.margin = margin(0.5, 0.7, .5, .7, &quot;cm&quot;)), 
                  fig_2a_2, labels=c(&quot;A&quot;, &quot;&quot;), nrow=1, widths = c(1,3)) +
@@ -1876,20 +1831,6 @@ library(ggpubr)</code></pre>
 }
 
 fig2()</code></pre>
-<pre><code>## </code></pre>
-<pre><code>## Registered S3 method overwritten by &#39;enrichplot&#39;:
-##   method               from
-##   fortify.enrichResult DOSE</code></pre>
-<pre><code>## clusterProfiler v3.12.0  For help: https://guangchuangyu.github.io/software/clusterProfiler
-## 
-## If you use clusterProfiler in published research, please cite:
-## Guangchuang Yu, Li-Gen Wang, Yanyan Han, Qing-Yu He. clusterProfiler: an R package for comparing biological themes among gene clusters. OMICS: A Journal of Integrative Biology. 2012, 16(5):284-287.</code></pre>
-<pre><code>## wrong orderBy parameter; set to default `orderBy = &quot;x&quot;`</code></pre>
-<pre><code>## Warning: Removed 1 rows containing missing values (geom_point).</code></pre>
-<pre><code>## Scale for &#39;colour&#39; is already present. Adding another scale for
-## &#39;colour&#39;, which will replace the existing scale.</code></pre>
-<pre><code>## Warning: Removed 1 rows containing missing values (geom_text).</code></pre>
-<pre><code>## Warning: Removed 1 rows containing missing values (geom_text).</code></pre>
 <pre><code>## png 
 ##   2</code></pre>
 </div>
@@ -1913,13 +1854,14 @@ fda_ix &lt;- unique(c(fda_ix, which(metadata$pert_desc %in%
 ))))
 
 fda_ix &lt;- fda_ix[which(metadata$is_gold[fda_ix])]
-fda_keys &lt;- paste(metadata$distil_id[fda_ix], &quot;_ZSVC&quot;, sep = &quot;&quot;)
 
-## Rather than fetch from redis as below, the data can be loaded from file
+# fda_keys &lt;- paste(metadata$distil_id[fda_ix], &quot;_ZSVC&quot;, sep = &quot;&quot;)
+# 
+# # Rather than fetch from redis as below, the data can be loaded from file
 # bigFetch &lt;- function(keys, stride=2000) {
 #   data &lt;- matrix(0, ncol = length(keys), nrow = 978)
-#   keys &lt;- split(keys, ceiling(seq_along(fda_keys)/stride))  
-#   
+#   keys &lt;- split(keys, ceiling(seq_along(fda_keys)/stride))
+# 
 #   for (i in 1:length(keys)) {
 #     r &lt;- redisMGet(keys[[i]])
 #     for (ii in 1:length(r)) {
@@ -1935,8 +1877,8 @@ fda_keys &lt;- paste(metadata$distil_id[fda_ix], &quot;_ZSVC&quot;, sep = &quot;
 # data &lt;- bigFetch(fda_keys)
 # data &lt;- apply(data, 2, as.numeric)
 # rownames(data) &lt;- names(redisGet(fda_keys[1]))
+# saveRDS(data, &quot;final_data/lincs_fda_zscores.rds&quot;)
 
-# the result of the above was saved in lincs_fda_zscores.rds
 data &lt;- readRDS(&quot;final_data/lincs_fda_zscores.rds&quot;)
 missing &lt;- which(apply(data, 2, sum)==0)
 data &lt;- data[,-missing]
@@ -1958,7 +1900,7 @@ xsum &lt;- function(x, up, down, n=489) {
 }
 scores &lt;- xsum(data, up, down)
 names(scores) &lt;- metadata$pert_desc[fda_ix]
-saveRDS(scores, &quot;lincs_xsum.rds&quot;)</code></pre>
+saveRDS(scores, &quot;final_data/lincs_xsum.rds&quot;)</code></pre>
 <p>Again, we are interested in drugs whose transcriptional effects are specific to the LMNA signature (in theory, this would minimize side effects and reduce false positives related to generic phenomena like osmotic shifts, etc.). Therefore, we scored 10,000 random gene signatures (each with the same number of “up” and “down” regulated genes as the LMNA signature) to esimate how specific each drug was to the LMNA signature. This was performed on our HPC cluster (code can be found in <code>drug_perm.R</code>) Using the resulting random signature score matrix, we calculated the estimated p-value for each drug. Since there are multiple instances for each drug, we first summarize the scores for each drug by taking the median. We then see how many of the 10,000 random signature scores for each drug more negative than the LMNA signature score (more negative because we are trying to <strong>reverse</strong> the effects of LMNA knockdown). Dividing this frequency by 10,000 gives us our estimated p-value.</p>
 <pre class="r"><code>library(ggrepel)
 fig3ab &lt;- function() {
@@ -1979,7 +1921,6 @@ fig3ab &lt;- function() {
   spec_p &lt;- spec_p * (spec &lt; 0)
   spec_p &lt;- 1-spec_p
   spec_p &lt;- spec_p[order(spec_p)]
-  spec_p &lt;- spec_p[-which(is.na(names(spec_p)))]
   df &lt;- data.frame(drug = names(spec_p),
                    y = spec_p, 
                    x = 1:length(spec_p), 
@@ -2011,15 +1952,17 @@ fig3ab &lt;- function() {
       color = &#39;#444444&#39;,
       size = 3.5,
       fontface = &quot;bold&quot;, 
-      seed = 105) + 
+      seed = 105, 
+      na.rm = TRUE) + 
     geom_point(color = &quot;grey&quot;, shape = 19, size = 0.7) +
-    geom_point(aes(color = CMAP, fill = CMAP), shape = 21) +
+    geom_point(aes(color = CMAP, fill = CMAP), shape = 21, na.rm=TRUE) +
     geom_text(
       data = labels_c,
       hjust = 0,
       aes(x, y, label = label),
       color = &#39;#444444&#39;,
-      size = 3.5) +
+      size = 3.5,
+      na.rm = TRUE) +
     ylab(&quot;P-value&quot;) +
     xlab(&quot;Drugs Sorted by Enrichment&quot;) +
     ggtitle(&quot;Top CMAP candidates&quot;) +
@@ -2045,9 +1988,10 @@ fig3ab &lt;- function() {
       color = &#39;#444444&#39;,
       size = 3.5,
       fontface = &quot;bold&quot;,
-      seed = 105) + 
+      seed = 105,
+      na.rm = TRUE) + 
     geom_point(color = &quot;grey&quot;, shape = 21, size = .7) +
-    geom_point(aes(color = ARB, fill = ARB), shape = 21) +
+    geom_point(aes(color = ARB, fill = ARB), shape = 21, na.rm=TRUE) +
     geom_text(
       data = labels_h,
       hjust = 0,
@@ -2065,31 +2009,9 @@ fig3ab &lt;- function() {
   list(cmap, arb_sh) 
 }</code></pre>
 <p>We wanted to examine the expression of the genes in the LMNA signature in high and low scoring ARBs. Expression data for the ARB treated samples was again extracted from our Redis database as saved as <code>final_data/lincs_arbs.rds</code>, available in this repository. We then looked at the expression in two high scoring arbs vs. a low scoring arbs to see what the patterns of expression might be and get a sense for whether all or only some of the signature genes were consistently regulated.</p>
-<pre class="r"><code>library(ComplexHeatmap)</code></pre>
-<pre><code>## Loading required package: grid</code></pre>
-<pre><code>## ========================================
-## ComplexHeatmap version 2.0.0
-## Bioconductor page: http://bioconductor.org/packages/ComplexHeatmap/
-## Github page: https://github.com/jokergoo/ComplexHeatmap
-## Documentation: http://jokergoo.github.io/ComplexHeatmap-reference
-## 
-## If you use it in published research, please cite:
-## Gu, Z. Complex heatmaps reveal patterns and correlations in multidimensional 
-##   genomic data. Bioinformatics 2016.
-## ========================================</code></pre>
-<pre class="r"><code>library(hgu133a.db)
-library(circlize)</code></pre>
-<pre><code>## ========================================
-## circlize version 0.4.6
-## CRAN page: https://cran.r-project.org/package=circlize
-## Github page: https://github.com/jokergoo/circlize
-## Documentation: http://jokergoo.github.io/circlize_book/book/
-## 
-## If you use it in published research, please cite:
-## Gu, Z. circlize implements and enhances circular visualization 
-##   in R. Bioinformatics 2014.
-## ========================================</code></pre>
-<pre class="r"><code>fig3c &lt;- function() {
+<pre class="r"><code>library(ComplexHeatmap)
+library(hgu133a.db)
+fig3c &lt;- function() {
   
   metadata &lt;- readRDS(&quot;final_data/metadata.rds&quot;)
   up &lt;- read.delim(&quot;lamin_up.grp&quot;, 
@@ -2182,7 +2104,7 @@ library(circlize)</code></pre>
 
 }</code></pre>
 <p>The figure as it appears in the manuscript can then be assembled.</p>
-<pre class="r"><code>library(ggpubr)
+<pre class="r"><code>library(circlize)
 fig3 &lt;- function() {
   ab &lt;- fig3ab()
   a &lt;- ab[[1]]
@@ -2193,7 +2115,6 @@ fig3 &lt;- function() {
              gap = unit(c(5), &quot;mm&quot;),
              row_sub_title_side = &quot;left&quot;,
              heatmap_legend_side = &quot;bottom&quot;))
-  
   
   png(file= &quot;fig3.png&quot;, res = 300, units = &quot;in&quot;, height = 8, width = 10)
   g &lt;- ggarrange(ggarrange(a + 
@@ -2211,9 +2132,6 @@ fig3 &lt;- function() {
   
 }
 fig3()</code></pre>
-<pre><code>## Warning: Removed 608 rows containing missing values (geom_point).</code></pre>
-<pre><code>## Warning: Removed 607 rows containing missing values (geom_point).</code></pre>
-<pre><code>## Warning: Removed 1 rows containing missing values (geom_text).</code></pre>
 <pre><code>## png 
 ##   2</code></pre>
 <p>To further investigate whether the observed effect were specific to Olmesartan and/or irbesartan or were, rather, some sort of class effect of ARBs, we analyzed the ARBs in the dataset as a class. This again required permutation against random gene signatures, so the result is shown below but this code is not executed when rendering this document.</p>
@@ -2256,31 +2174,8 @@ r &lt;- foreach(i=1:10000, .combine=&quot;cbind&quot;) %dopar% {
 <div id="figure-4" class="section level2">
 <h2>Figure 4</h2>
 <p>The data for Figure 4 is provided in <code>final_data/validation.tab</code>. The analysis was performed as follows, including calculation of t-test p-values from means and sds. The output of ggsignif from the commented out sections below was used as the basis of adding p-value annotations to the figure with vector image editting software.</p>
-<pre class="r"><code>library(dplyr)</code></pre>
-<pre><code>## 
-## Attaching package: &#39;dplyr&#39;</code></pre>
-<pre><code>## The following object is masked from &#39;package:AnnotationDbi&#39;:
-## 
-##     select</code></pre>
-<pre><code>## The following objects are masked from &#39;package:IRanges&#39;:
-## 
-##     collapse, desc, intersect, setdiff, slice, union</code></pre>
-<pre><code>## The following objects are masked from &#39;package:S4Vectors&#39;:
-## 
-##     first, intersect, rename, setdiff, setequal, union</code></pre>
-<pre><code>## The following object is masked from &#39;package:Biobase&#39;:
-## 
-##     combine</code></pre>
-<pre><code>## The following objects are masked from &#39;package:BiocGenerics&#39;:
-## 
-##     combine, intersect, setdiff, union</code></pre>
-<pre><code>## The following objects are masked from &#39;package:stats&#39;:
-## 
-##     filter, lag</code></pre>
-<pre><code>## The following objects are masked from &#39;package:base&#39;:
-## 
-##     intersect, setdiff, setequal, union</code></pre>
-<pre class="r"><code>library(reshape2)
+<pre class="r"><code>library(dplyr)
+library(reshape2)
 library(ggplot2)
 library(ggsignif)
 library(stringr)
