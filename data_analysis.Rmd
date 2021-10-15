@@ -8,14 +8,14 @@ output:
     toc_float: yes
   pdf_document:
     toc: yes
-date: "August 21, 2019"
+date: "October 15, 2021"
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(message = FALSE, 
                       warning = FALSE, 
                       echo = TRUE, 
-                      eval=TRUE)
+                      eval=FALSE)
 
 man_theme <- function() {
   theme_bw() +
@@ -57,10 +57,12 @@ catcolors <- c("#00ade2", "#dd4055", "#00b04e", "#ef9630", "#706aaa")
 This document was prepared in support of our paper:
 
 <center>
-<b>Toxicogenomic identification of repositioned therapy for a rare monogenic disease.</b>
 
-Eric J. Kort MD MS, Nazish Sayed MD PhD, Chun Liu PhD, Sean Wu MD PhD, 
-Joseph Wu MD PhD, Stefan Jovinge MD PhD.
+<b>Olmesartan restores LMNA function in haploinsufficient cardiomyocytes. </b>
+
+Eric J. Kort MD MS, Nazish Sayed MD PhD, Chun Liu PhD, Gema Mondejar, 
+Jens Forsberg, Emily Eugster, Sean M. Wu MD PhD, Joseph C. Wu MD PhD, 
+Stefan Jovinge MD PhD
 
 </center>
 
@@ -715,24 +717,33 @@ library(hgu133a.db)
 fig3c <- function() {
   
   metadata <- readRDS("final_data/metadata.rds")
+ # up <- read.delim("PDGF_BIOCARTA.txt", 
+   #                 as.is = TRUE, 
+   #                 header = FALSE)$V1
+   # metadata <- readRDS("final_data/metadata.rds")
   up <- read.delim("lamin_up.grp", 
                    as.is = TRUE, 
                    header = FALSE)$V1
+  library(hgu133a.db)
   down <- read.delim("lamin_down.grp", 
                      as.is = TRUE, 
                      header = FALSE)$V1
   
   dat <- readRDS("final_data/lincs_arbs.rds")
+  #up <- unlist(mget(up, revmap(hgu133aSYMBOL)))
+  #up <- up[which(up %in% rownames(dat))]
+
   dat <- as.data.frame(dat[c(up, down),])
+  
   ix <- match(gsub("_ZSVC", "", colnames(dat)), metadata$distil_id)
-  sym <- unlist(mget(rownames(dat), hgu133aSYMBOL))
-  dat <- dat[-which(is.na(sym)),]
+  sym <- unlist(mget(rownames(dat)), hgu133aSYMBOL)
+  #dat <- dat[-which(is.na(sym)),]
   
   drug <- metadata$pert_desc[ix]
   names(drug) <- colnames(dat)
   genetype <- c(rep("Up", length(up)), rep("Down", length(down)))
-  genetype <- genetype[-which(is.na(sym))]
-  sym <- sym[-which(is.na(sym))]
+  #genetype <- genetype[-which(is.na(sym))]
+  #sym <- sym[-which(is.na(sym))]
   names(genetype) <- rownames(dat)
   genetype <- data.frame(genetype = factor(genetype, 
                                            levels = c("Up", "Down"), 
